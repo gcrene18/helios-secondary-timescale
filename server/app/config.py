@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
+from loguru import logger
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,13 @@ class Settings:
     
     # API Auth
     API_KEY: str = os.getenv("API_KEY", "")
+    
+    # StubHub credentials
+    STUBHUB_USERNAME: str = os.getenv("STUBHUB_USERNAME", "")
+    STUBHUB_PASSWORD: str = os.getenv("STUBHUB_PASSWORD", "")
+    
+    # Proxy settings
+    PROXY_URL: str = os.getenv("PROXY_URL", "")
     
     # Browser automation settings
     BROWSER_HEADLESS: bool = os.getenv("BROWSER_HEADLESS", "True").lower() == "true"
@@ -61,5 +69,5 @@ settings = Settings()
 
 # Print config for debugging
 if __name__ == "__main__":
-    print(f"Loaded configuration for {settings.APP_NAME}")
+    logger.info(f"Loaded configuration for {settings.APP_NAME}")
     print(f"GOLOGIN_PROFILE_IDS: {settings.GOLOGIN_PROFILE_IDS}")

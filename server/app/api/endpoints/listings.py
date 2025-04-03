@@ -14,21 +14,18 @@ router = APIRouter()
 class ListingResponse(BaseModel):
     """Response model for listing data"""
     event_id: str
-    event_name: str
-    event_datetime: str
-    venue: Dict[str, Any]
+    event_name: Optional[str] = None
+    event_datetime: Optional[str] = None
+    venue: Optional[Dict[str, Any]] = {}
     listings: List[Dict[str, Any]]
-    total_listings: int
-    min_price: float
-    max_price: float
-    median_price: float
-    fetched_at: str
-    cached: bool
+    stats: Dict[str, Any]
+    metadata: Dict[str, Any]
+    cached: bool = False
 
 @router.get("/{event_id}", response_model=ListingResponse)
 async def get_listings(
     event_id: str,
-    force_refresh: bool = Query(True, description="Force fresh data fetch instead of using cache")
+    force_refresh: bool = Query(False, description="Force fresh data fetch instead of using cache")
 ):
     """
     Get ticket listings for a specific StubHub event
@@ -44,17 +41,38 @@ async def get_listings(
         
         # No cache or force refresh, fetch fresh data
         logger.info(f"Fetching fresh listings for event {event_id}")
-        browser_pool = get_browser_pool()
+        
+        # Get browser pool - make sure to await the async function
+        browser_pool = await get_browser_pool()
         
         # Get listings using browser automation
         listings_data = await get_event_listings(event_id, browser_pool)
         
-        # Cache the results
+        # Add basic validation to ensure data meets the model requirements
+        if not listings_data:
+            logger.error(f"No listings data returned for event {event_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No listings found for event {event_id}"
+            )
+            
+        # Ensure required fields exist
+        if "listings" not in listings_data or "stats" not in listings_data:
+            logger.error(f"Missing required fields in response data for event {event_id}: {listings_data.keys()}")
+            # Try to recover - create empty fields if missing
+            listings_data["listings"] = listings_data.get("listings", [])
+            listings_data["stats"] = listings_data.get("stats", {})
+            listings_data["metadata"] = listings_data.get("metadata", {})
+        
+        # Cache the results if we have valid data
         if listings_data and not force_refresh:
             await cache_listings(event_id, listings_data)
         
         # Mark as not cached
         listings_data["cached"] = False
+        
+        # Log what we're returning
+        logger.info(f"Returning {len(listings_data.get('listings', []))} listings for event {event_id}")
         
         return listings_data
     
