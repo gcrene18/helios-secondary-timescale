@@ -1,7 +1,7 @@
 """
-Service for fetching StubHub event listings using browser automation
+Service for fetching and processing StubHub event listings
 """
-from loguru import logger
+
 import asyncio
 import json
 import random
@@ -9,13 +9,16 @@ import time
 from datetime import datetime, date
 from typing import Dict, List, Any, Optional
 from playwright.async_api import Page
+from loguru import logger
 
 from app.config import settings
 from app.services.browser_pool import BrowserPool, BrowserSession
 from app.utils.stealth import perform_human_like_actions, add_random_delay
+from app.utils.debug import save_screenshot, save_api_response
 import math
 from decimal import Decimal
 from dateutil.parser import parse
+
 
 def _ensure_serializable(data):
     """
@@ -82,7 +85,7 @@ async def get_event_listings(event_id: str, browser_pool: BrowserPool) -> Dict[s
             try:
                 pages = await session.context.pages()
                 if pages:
-                    await pages[0].screenshot(path=f"error_{event_id}.png")
+                    await save_screenshot(pages[0], f"error_{event_id}.png")
             except:
                 pass
         raise
@@ -113,11 +116,11 @@ async def _fetch_event_data(page: Page, event_id: str) -> Dict[str, Any]:
         if await page.locator("text=Sign In").count() > 0 or page.url.startswith("https://account.stubhub.com/login"):
             logger.warning("Login required but should have been handled by session management")
             # The browser_pool's ensure_login should have already handled this
-            await page.screenshot(path=f"login_needed_{event_id}.png")
+            await save_screenshot(page, f"login_needed_{event_id}.png")
             raise Exception("Login required but session should already be authenticated")
         
         # Save a screenshot for debugging/verification
-        await page.screenshot(path=f"event_page_{event_id}.png")
+        await save_screenshot(page, f"event_page_{event_id}.png")
         
         # Return minimal event data - we'll get details from the API response
         event_data = {
@@ -133,7 +136,7 @@ async def _fetch_event_data(page: Page, event_id: str) -> Dict[str, Any]:
         logger.error(f"Error navigating to event page for {event_id}: {str(e)}")
         # Take a screenshot if possible for debugging
         try:
-            await page.screenshot(path=f"event_error_{event_id}.png")
+            await save_screenshot(page, f"event_error_{event_id}.png")
         except:
             pass
         raise
@@ -160,8 +163,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                     
                     # Save raw response for debugging
                     try:
-                        with open(f"api_raw_response_{event_id}.json", "w") as f:
-                            json.dump(json_data, f, indent=2)
+                        await save_api_response(json_data, f"api_raw_response_{event_id}.json")
                         logger.info(f"Saved raw API response to api_raw_response_{event_id}.json")
                     except Exception as e:
                         logger.warning(f"Failed to save raw API response: {str(e)}")
@@ -187,7 +189,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                                 logger.warning("Expected field 'section' not found in listing")
                         
                         # Take screenshot of current page state
-                        await page.screenshot(path=f"api_data_received_{event_id}.png")
+                        await save_screenshot(page, f"api_data_received_{event_id}.png")
                         api_response_received.set()
                     else:
                         logger.warning(f"Unexpected API response format: not a list. Type: {type(json_data)}")
@@ -198,8 +200,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                             logger.info(f"Extracted {len(api_listings_data)} listings from dict response")
                             api_response_received.set()
                         else:
-                            with open(f"api_response_{event_id}.json", "w") as f:
-                                json.dump(json_data, f, indent=2)
+                            await save_api_response(json_data, f"api_response_{event_id}.json")
                             logger.error(f"Could not extract listings from non-list response")
                 except Exception as e:
                     logger.error(f"Error parsing API response: {str(e)}")
@@ -217,7 +218,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
             await page.click("button:has-text('StubHub Listings')")
         except Exception as e:
             logger.warning(f"Could not find or click 'StubHub Listings' button: {str(e)}")
-            await page.screenshot(path=f"listings_button_not_found_{event_id}.png")
+            await save_screenshot(page, f"listings_button_not_found_{event_id}.png")
             
             # Try alternate approach - just wait for a while to see if API request happens
             logger.info("Waiting for potential API calls to occur...")
@@ -232,7 +233,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
             logger.info("API response received successfully")
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for API response")
-            await page.screenshot(path=f"api_timeout_{event_id}.png")
+            await save_screenshot(page, f"api_timeout_{event_id}.png")
         
         # If we got data from API interception, use it
         if api_listings_data:
@@ -247,7 +248,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
         
         # If we didn't get data from API interception, log an error
         logger.error(f"Failed to intercept listings data from API for event {event_id}")
-        await page.screenshot(path=f"no_api_data_{event_id}.png")
+        await save_screenshot(page, f"no_api_data_{event_id}.png")
         
         # Return empty list as we couldn't get any data
         return []
@@ -258,7 +259,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
         logger.error(f"Traceback: {traceback.format_exc()}")
         # Take a screenshot if possible for debugging
         try:
-            await page.screenshot(path=f"error_listings_{event_id}.png")
+            await save_screenshot(page, f"error_listings_{event_id}.png")
         except:
             pass
         return []

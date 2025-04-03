@@ -1,7 +1,7 @@
 """
 Browser Pool service for managing browser instances
 """
-from playwright.async_api import async_playwright, BrowserContext
+from playwright.async_api import async_playwright, BrowserContext, Browser
 import asyncio
 from typing import Dict, List, Optional, Any
 from loguru import logger
@@ -14,6 +14,7 @@ import uuid
 
 from app.config import settings
 from app.utils.stealth import setup_stealth_browser
+from app.utils.debug import save_screenshot
 
 # Global singleton instance
 _browser_pool = None
@@ -61,7 +62,7 @@ class BrowserSession:
             await page.goto("https://pro.stubhub.com/login", timeout=settings.BROWSER_TIMEOUT_SECONDS * 1000)
             
             # Take screenshot for debugging
-            await page.screenshot(path=f"login_start_{self.id}.png")
+            await save_screenshot(page, f"login_start_{self.id}.png")
             
             # Wait for login form and check if we're already logged in
             try:
@@ -79,7 +80,7 @@ class BrowserSession:
                 
                 # Enter email
                 await page.fill("input[id='Login_UserName']", settings.STUBHUB_USERNAME)
-                await page.screenshot(path=f"login_email_{self.id}.png")
+                await save_screenshot(page, f"login_email_{self.id}.png")
 
                 # Submit email and wait for password field
                 logger.info("Submitting email address")
@@ -88,7 +89,7 @@ class BrowserSession:
                 logger.info("Waiting for password field")
                 await page.wait_for_selector("input[id='Login_Password']", timeout=10000)
                 await page.fill("input[id='Login_Password']", settings.STUBHUB_PASSWORD)
-                await page.screenshot(path=f"login_password_{self.id}.png")
+                await save_screenshot(page, f"login_password_{self.id}.png")
                 
                 # Submit login
                 logger.info("Submitting password")
@@ -106,7 +107,7 @@ class BrowserSession:
                         logger.warning("Network didn't reach idle state, continuing anyway")
                     
                     # Take a screenshot of where we ended up
-                    await page.screenshot(path=f"login_success_{self.id}.png")
+                    await save_screenshot(page, f"login_success_{self.id}.png")
                     
                     # Check if we're on the home page or any other success indicator
                     current_url = page.url
@@ -126,7 +127,7 @@ class BrowserSession:
                         return False
                 except Exception as e:
                     logger.error(f"Login post-submit issue: {str(e)}")
-                    await page.screenshot(path=f"login_error_redirect_{self.id}.png")
+                    await save_screenshot(page, f"login_error_redirect_{self.id}.png")
                     
                     # Check if we're on the home page or any other success indicator
                     if (page.url.startswith("https://account.stubhub.com/home") or 
@@ -145,7 +146,7 @@ class BrowserSession:
                     
             except Exception as e:
                 logger.error(f"Login process issue: {str(e)}")
-                await page.screenshot(path=f"login_error_process_{self.id}.png")
+                await save_screenshot(page, f"login_error_process_{self.id}.png")
                 if page is not None:
                     await page.close()
                 return False
@@ -153,7 +154,7 @@ class BrowserSession:
         except Exception as e:
             logger.error(f"Failed to login to StubHub: {str(e)}")
             try:
-                await page.screenshot(path=f"login_error_general_{self.id}.png")
+                await save_screenshot(page, f"login_error_general_{self.id}.png")
                 if page is not None:
                     await page.close()
             except:
