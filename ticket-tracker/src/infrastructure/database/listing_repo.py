@@ -151,32 +151,46 @@ class ListingRepository:
         for listing in listings:
             listing.event_id = event_id
         
+        # Use a more efficient bulk insert with COPY
+        # This is much faster than executemany for large batches
         insert_sql = f"""
         INSERT INTO {ListingRepository.TABLE_NAME} 
         (event_id, viagogo_id, section, row, quantity, price_per_ticket, 
          total_price, currency, listing_url, provider, captured_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES %s;
         """
         
-        params_list = [
-            (
-                listing.event_id,
-                listing.viagogo_id,
-                listing.section,
-                listing.row,
-                listing.quantity,
-                listing.price_per_ticket,
-                listing.total_price,
-                listing.currency,
-                listing.listing_url,
-                listing.provider,
-                listing.captured_at or datetime.now()
-            )
-            for listing in listings
-        ]
+        # Prepare data for psycopg2.extras.execute_values
+        template = "(%(event_id)s, %(viagogo_id)s, %(section)s, %(row)s, %(quantity)s, %(price_per_ticket)s, %(total_price)s, %(currency)s, %(listing_url)s, %(provider)s, %(captured_at)s)"
+        
+        params_list = []
+        now = datetime.now()
+        
+        for listing in listings:
+            params_list.append({
+                'event_id': listing.event_id,
+                'viagogo_id': listing.viagogo_id,
+                'section': listing.section,
+                'row': listing.row,
+                'quantity': listing.quantity,
+                'price_per_ticket': listing.price_per_ticket,
+                'total_price': listing.total_price,
+                'currency': listing.currency,
+                'listing_url': listing.listing_url,
+                'provider': listing.provider,
+                'captured_at': listing.captured_at or now
+            })
         
         try:
-            row_count = db.execute_many(insert_sql, params_list)
+            # Use psycopg2.extras.execute_values for more efficient bulk insert
+            from psycopg2.extras import execute_values
+            
+            with db.connection() as conn:
+                with conn.cursor() as cursor:
+                    execute_values(cursor, insert_sql, params_list, template=template, page_size=1000)
+                    conn.commit()
+                    row_count = cursor.rowcount
+            
             logger.info(f"Batch inserted {row_count} listings for event {event_id}")
             return row_count
         except Exception as e:

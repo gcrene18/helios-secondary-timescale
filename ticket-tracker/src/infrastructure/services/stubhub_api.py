@@ -53,10 +53,15 @@ class StubHubService:
             
             if not listings:
                 logger.warning(f"No listings found for event {event.name} (ID: {event.event_id})")
+                # Update the last fetch time even if no listings were found
+                EventRepository.update_last_listings_fetch(event.event_id)
                 return 0
             
             # Store listings in database
             count = ListingRepository.batch_insert(event.event_id, listings)
+            
+            # Update the last fetch time for this event
+            EventRepository.update_last_listings_fetch(event.event_id)
             
             logger.info(
                 f"Stored {count} listings for event {event.name} "
@@ -106,3 +111,25 @@ class StubHubService:
         )
         
         return results
+    
+    async def fetch_events_needing_update(self, hours: int = 12) -> Dict[str, int]:
+        """
+        Fetch and store listings for events that haven't been updated in the specified hours.
+        
+        Args:
+            hours: Number of hours to look back
+            
+        Returns:
+            Dictionary with event viagogo IDs and listing counts
+        """
+        # Get events that need updating
+        events = EventRepository.get_events_needing_update(hours)
+        
+        if not events:
+            logger.info(f"No events found needing updates (older than {hours} hours)")
+            return {}
+        
+        logger.info(f"Found {len(events)} events needing updates (older than {hours} hours)")
+        
+        # Fetch listings for these events
+        return await self.fetch_all_events_listings(events)

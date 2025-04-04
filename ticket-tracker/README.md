@@ -127,6 +127,12 @@ python cli.py cleanup-untracked-events --no-dry-run --delete
 # Fetch ticket listings for all events
 python cli.py fetch-listings
 
+# Fetch listings for events not updated in the last 12 hours (default)
+python cli.py fetch-outdated-listings
+
+# Fetch listings for events not updated in a custom timeframe
+python cli.py fetch-outdated-listings --hours 24
+
 # Fetch listings for a specific event
 python cli.py fetch-listings <viagogo_id>
 

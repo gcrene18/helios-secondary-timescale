@@ -2,8 +2,7 @@
 Event repository for database operations.
 """
 from typing import List, Optional, Dict, Any
-from datetime import datetime
-
+from datetime import datetime, timedelta
 from ...core.db import db
 from ...core.logging import get_logger
 from ...domain.event import Event
@@ -34,7 +33,8 @@ class EventRepository:
             viagogo_id TEXT NOT NULL UNIQUE,
             is_tracked BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_listings_fetch TIMESTAMP
         );
         """
         
@@ -51,10 +51,24 @@ class EventRepository:
         END $$;
         """
         
+        # Add last_listings_fetch column if it doesn't exist
+        alter_table_sql_last_listings_fetch = f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT FROM information_schema.columns 
+                WHERE table_name = '{EventRepository.TABLE_NAME}' AND column_name = 'last_listings_fetch'
+            ) THEN
+                ALTER TABLE {EventRepository.TABLE_NAME} ADD COLUMN last_listings_fetch TIMESTAMP;
+            END IF;
+        END $$;
+        """
+        
         try:
             db.execute(create_table_sql)
             db.execute(alter_table_sql)
-            logger.info(f"Ensured table {EventRepository.TABLE_NAME} exists with is_tracked column")
+            db.execute(alter_table_sql_last_listings_fetch)
+            logger.info(f"Ensured table {EventRepository.TABLE_NAME} exists with is_tracked and last_listings_fetch columns")
             return True
         except Exception as e:
             logger.error(f"Failed to create/update table {EventRepository.TABLE_NAME}", error=str(e))
@@ -200,6 +214,55 @@ class EventRepository:
         except Exception as e:
             logger.error(f"Error deleting event with ID {event_id}", error=str(e))
             return False
+    
+    @staticmethod
+    def update_last_listings_fetch(event_id: int) -> bool:
+        """Update the timestamp of when listings were last fetched for an event."""
+        update_sql = f"""
+        UPDATE {EventRepository.TABLE_NAME}
+        SET last_listings_fetch = %s
+        WHERE event_id = %s;
+        """
+        
+        try:
+            db.execute(update_sql, (datetime.now(), event_id))
+            logger.debug(f"Updated last_listings_fetch for event ID {event_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating last_listings_fetch for event ID {event_id}", error=str(e))
+            return False
+    
+    @staticmethod
+    def get_events_needing_update(hours: int = 12) -> List[Event]:
+        """
+        Get events that haven't had their listings updated in the specified number of hours.
+        
+        Args:
+            hours: Number of hours to look back
+            
+        Returns:
+            List of Event objects that need updating
+        """
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        
+        query = f"""
+        SELECT * FROM {EventRepository.TABLE_NAME}
+        WHERE is_tracked = TRUE AND (last_listings_fetch IS NULL OR last_listings_fetch < %s)
+        ORDER BY event_date;
+        """
+        
+        try:
+            results = db.execute(query, (cutoff_time,), commit=False)
+            
+            if not results:
+                return []
+                
+            events = [Event.from_dict(dict(row)) for row in results]
+            logger.info(f"Found {len(events)} events needing listing updates (older than {hours} hours)")
+            return events
+        except Exception as e:
+            logger.error("Error retrieving events needing updates", error=str(e))
+            return []
     
     @staticmethod
     def sync_from_google_sheets(events: List[Event]) -> Dict[str, int]:

@@ -185,6 +185,45 @@ def fetch_listings(
 
 
 @app.command()
+def fetch_outdated_listings(
+    hours: int = typer.Option(
+        12, help="Fetch listings for events not updated in this many hours"
+    )
+):
+    """Fetch ticket listings for events that haven't been updated in the specified hours."""
+    print_header()
+    
+    async def run():
+        try:
+            console.print(f"[bold yellow]Fetching listings for events not updated in the last {hours} hours...[/bold yellow]")
+            
+            # Create StubHub service
+            stubhub_service = StubHubService()
+            
+            # Fetch listings for events needing updates
+            results = await stubhub_service.fetch_events_needing_update(hours)
+            
+            if not results:
+                console.print("[bold yellow]No events found needing updates[/bold yellow]")
+                return
+            
+            # Display results
+            total_listings = sum(results.values())
+            events_with_listings = sum(1 for count in results.values() if count > 0)
+            
+            console.print(f"[bold green]Completed fetching listings for outdated events:[/bold green] "
+                         f"Found listings for {events_with_listings}/{len(results)} events, "
+                         f"Stored {total_listings} total listings")
+        
+        except Exception as e:
+            console.print(f"[bold red]Error fetching listings for outdated events: {e}[/bold red]")
+            raise typer.Exit(code=1)
+    
+    # Run the async function
+    asyncio.run(run())
+
+
+@app.command()
 def show_events():
     """Display events stored in the database."""
     print_header()

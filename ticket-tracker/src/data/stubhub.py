@@ -102,14 +102,23 @@ class StubHubClient:
                     if not isinstance(item, dict):
                         continue
                         
+                    # Extract price information from the nested structure
+                    price_per_ticket = 0.0
+                    if 'sellerAllInPrice' in item and isinstance(item['sellerAllInPrice'], dict):
+                        price_per_ticket = float(item['sellerAllInPrice'].get('amt', 0))
+                    
+                    # Calculate total price based on quantity
+                    quantity = item.get('availableTickets', 1)
+                    total_price = price_per_ticket * quantity
+                    
                     # Map the proxy API response to our expected format
                     listing = {
                         'section': item.get('section', 'Unknown'),
                         'row': item.get('row'),
-                        'quantity': item.get('quantity', 1),
-                        'pricePerTicket': float(item.get('price_per_ticket', 0)),
-                        'totalPrice': float(item.get('total_price', 0)),
-                        'currency': item.get('currency', 'USD'),
+                        'quantity': quantity,
+                        'pricePerTicket': price_per_ticket,
+                        'totalPrice': total_price,
+                        'currency': item.get('currencyCode', 'USD'),
                         'listingUrl': item.get('listing_url')
                     }
                     listings.append(listing)
