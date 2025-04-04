@@ -48,6 +48,16 @@ class Settings(BaseSettings):
         env="STUBHUB_API_BASE_URL"
     )
     
+    # StubHub Proxy API Settings
+    stubhub_proxy_api_url: str = Field(
+        default="http://localhost:8001",
+        env="STUBHUB_PROXY_API_URL"
+    )
+    stubhub_proxy_api_key: Optional[str] = Field(
+        default=None,
+        env="STUBHUB_PROXY_API_KEY"
+    )
+    
     # Randomization Settings
     min_random_factor: float = Field(default=0.7, env="MIN_RANDOM_FACTOR")
     max_random_factor: float = Field(default=1.3, env="MAX_RANDOM_FACTOR")

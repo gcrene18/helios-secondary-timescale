@@ -6,6 +6,7 @@ import asyncio
 import json
 import random
 import time
+import traceback
 from datetime import datetime, date
 from typing import Dict, List, Any, Optional
 from playwright.async_api import Page
@@ -41,13 +42,15 @@ def _ensure_serializable(data):
         return str(data)
 
 
-async def get_event_listings(event_id: str, browser_pool: BrowserPool) -> Dict[str, Any]:
+async def get_event_listings(event_id: str, browser_pool: BrowserPool, event_data: Optional[Dict[str, Any]] = None, fetch_venue_map: bool = False) -> Dict[str, Any]:
     """
     Fetch ticket listings for a specific StubHub event via StubHub Pro
     
     Args:
         event_id: StubHub event ID
         browser_pool: Browser pool instance
+        event_data: Optional event data to include in the response
+        fetch_venue_map: Whether to fetch venue map data (default: False)
         
     Returns:
         Dictionary containing event and listing data
@@ -68,7 +71,7 @@ async def get_event_listings(event_id: str, browser_pool: BrowserPool) -> Dict[s
         
         # Use the interceptor to get listings
         logger.info(f"Fetching listings data for event {event_id}")
-        listings_data = await _fetch_listing_data(page, event_id)
+        listings_data = await _fetch_listing_data(page, event_id, fetch_venue_map)
         
         # Close the page
         await page.close()
@@ -142,18 +145,29 @@ async def _fetch_event_data(page: Page, event_id: str) -> Dict[str, Any]:
         raise
 
 
-async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]:
-    """Fetch listing data from StubHub Pro by intercepting the API request"""
+async def _fetch_listing_data(page: Page, event_id: str, fetch_venue_map: bool = False) -> Dict[str, Any]:
+    """Fetch listing data from StubHub Pro by intercepting the API request
+    
+    Args:
+        page: Playwright page object
+        event_id: StubHub event ID
+        fetch_venue_map: Whether to fetch venue map data (default: False)
+        
+    Returns:
+        Dictionary containing listings and optionally venue map data
+    """
     try:
         logger.info(f"Setting up API interception for event {event_id} listings")
         
         # Variable to store intercepted API data
         api_listings_data = []
+        venue_map_data = None
         api_response_received = asyncio.Event()
+        venue_map_received = asyncio.Event()
         
-        # Set up response interception
+        # Set up response interception for listings
         async def handle_response(response):
-            nonlocal api_listings_data
+            nonlocal api_listings_data, venue_map_data
             
             # Check if this is the GetCompListingsByEventId endpoint
             if "GetCompListingsByEventId" in response.url and response.status == 200:
@@ -163,7 +177,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                     
                     # Save raw response for debugging
                     try:
-                        await save_api_response(json_data, f"api_raw_response_{event_id}.json")
+                        save_api_response(json_data, f"api_raw_response_{event_id}", event_id)
                         logger.info(f"Saved raw API response to api_raw_response_{event_id}.json")
                     except Exception as e:
                         logger.warning(f"Failed to save raw API response: {str(e)}")
@@ -189,7 +203,7 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                                 logger.warning("Expected field 'section' not found in listing")
                         
                         # Take screenshot of current page state
-                        await save_screenshot(page, f"api_data_received_{event_id}.png")
+                        await save_screenshot(page, f"api_data_received_{event_id}", "api")
                         api_response_received.set()
                     else:
                         logger.warning(f"Unexpected API response format: not a list. Type: {type(json_data)}")
@@ -200,11 +214,31 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
                             logger.info(f"Extracted {len(api_listings_data)} listings from dict response")
                             api_response_received.set()
                         else:
-                            await save_api_response(json_data, f"api_response_{event_id}.json")
+                            save_api_response(json_data, f"api_response_{event_id}", event_id)
                             logger.error(f"Could not extract listings from non-list response")
                 except Exception as e:
                     logger.error(f"Error parsing API response: {str(e)}")
-                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Check if this is the venue map API response (as a separate if, not elif)
+            # Only process venue map data if fetch_venue_map is True
+            if fetch_venue_map and "GetVenueMapsByScoreModelForEvent" in response.url and response.status == 200:
+                try:
+                    logger.info(f"Intercepted venue map response from StubHub Pro API: {response.url}")
+                    venue_map_data = await response.json()
+
+                    logger.info(venue_map_data)
+                    
+                    # Save raw response for debugging
+                    try:
+                        save_api_response(venue_map_data, f"venue_map_response_{event_id}", event_id)
+                        logger.info(f"Saved venue map API response for event {event_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save venue map API response: {str(e)}")
+                    
+                    venue_map_received.set()
+                except Exception as e:
+                    logger.error(f"Error parsing venue map API response: {str(e)}")
                     logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Register the response handler
@@ -218,7 +252,6 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
             await page.click("button:has-text('StubHub Listings')")
         except Exception as e:
             logger.warning(f"Could not find or click 'StubHub Listings' button: {str(e)}")
-            await save_screenshot(page, f"listings_button_not_found_{event_id}.png")
             
             # Try alternate approach - just wait for a while to see if API request happens
             logger.info("Waiting for potential API calls to occur...")
@@ -233,7 +266,17 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
             logger.info("API response received successfully")
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for API response")
-            await save_screenshot(page, f"api_timeout_{event_id}.png")
+            await save_screenshot(page, f"api_timeout_{event_id}", "api")
+        
+        # Wait for venue map data (but don't fail if we don't get it)
+        # Only wait for venue map data if fetch_venue_map is True
+        if fetch_venue_map:
+            try:
+                # Wait a shorter time for venue map data
+                await asyncio.wait_for(venue_map_received.wait(), 10)
+                logger.info("Venue map data received successfully")
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for venue map data")
         
         # If we got data from API interception, use it
         if api_listings_data:
@@ -243,29 +286,42 @@ async def _fetch_listing_data(page: Page, event_id: str) -> List[Dict[str, Any]]
             if len(api_listings_data) > 0:
                 sample = api_listings_data[0]
                 logger.info(f"Sample listing validation - Keys present: {list(sample.keys())}")
+            
+            # Return both listings and venue map data (if requested and available)
+            result = {
+                "listings": api_listings_data,
+            }
+            
+            # Only include venue map data if it was requested and successfully fetched
+            if fetch_venue_map and venue_map_data:
+                result["VenueMapsByScoreModel"] = venue_map_data
                 
-            return api_listings_data
+            return result
         
         # If we didn't get data from API interception, log an error
         logger.error(f"Failed to intercept listings data from API for event {event_id}")
-        await save_screenshot(page, f"no_api_data_{event_id}.png")
-        
-        # Return empty list as we couldn't get any data
-        return []
+        return {
+            "listings": [],
+            "VenueMapsByScoreModel": venue_map_data if fetch_venue_map else None
+        }
     
     except Exception as e:
         logger.error(f"Error fetching listing data for {event_id}: {str(e)}")
-        import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         # Take a screenshot if possible for debugging
         try:
-            await save_screenshot(page, f"error_listings_{event_id}.png")
-        except:
-            pass
-        return []
+            await save_screenshot(page, f"fetch_error_{event_id}", "errors")
+        except Exception as screenshot_error:
+            logger.error(f"Error saving error screenshot: {str(screenshot_error)}")
+        
+        # Return empty data on error
+        return {
+            "listings": [],
+            "VenueMapsByScoreModel": None
+        }
 
 
-def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listings_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listings_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process and combine event and listing data
     
@@ -278,7 +334,7 @@ def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listi
         Combined and processed data
     """
     # Calculate some stats about the listings
-    total_listings = len(listings_data)
+    total_listings = len(listings_data.get("listings", []))
     logger.info(f"Processing {total_listings} listings for event {event_id}")
     
     # Initialize price data
@@ -288,7 +344,7 @@ def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listi
     sections = {}
     
     # Process listings directly (they're already in the right format)
-    for listing in listings_data:
+    for listing in listings_data.get("listings", []):
         # Extract price from sellerAllInPrice.amt field (based on sample data structure)
         if "sellerAllInPrice" in listing and "amt" in listing["sellerAllInPrice"]:
             price = listing["sellerAllInPrice"]["amt"]
@@ -322,7 +378,7 @@ def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listi
     # Build the response
     result = {
         "event_id": event_id,
-        "listings": listings_data,  # Return the original listings data
+        "listings": listings_data.get("listings", []),  # Return the original listings data
         "stats": {
             "total_listings": total_listings,
             "min_price": round(min_price, 2) if min_price else 0,
@@ -335,7 +391,8 @@ def _process_event_and_listings(event_id: str, event_data: Dict[str, Any], listi
             "source": "stubhub_pro",
             "fetched_at": datetime.now().isoformat(),
             "is_tracked": is_tracked  # Use the extracted value
-        }
+        },
+        "VenueMapsByScoreModel": listings_data.get("VenueMapsByScoreModel")
     }
     
     # Add any additional event data if available

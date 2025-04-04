@@ -90,6 +90,12 @@ class BrowserSession:
                 await page.wait_for_selector("input[id='Login_Password']", timeout=10000)
                 await page.fill("input[id='Login_Password']", settings.STUBHUB_PASSWORD)
                 await save_screenshot(page, f"login_password_{self.id}.png")
+
+                # Wait for login button
+                logger.info("Waiting for login button")
+                await page.wait_for_selector("input[id='sbmt']", timeout=10000)
+
+                await page.wait_for_timeout(1000)
                 
                 # Submit login
                 logger.info("Submitting password")
@@ -253,10 +259,28 @@ class BrowserPool:
                             test_page = await session.context.new_page()
                             await test_page.goto("https://pro.stubhub.com", timeout=5000)
                             
+                            # Check for network errors
+                            if test_page.url.startswith("chrome-error://"):
+                                logger.error(f"Network error detected when checking session {session.id}: {test_page.url}")
+                                await save_screenshot(test_page, f"session_network_error_{session.id}.png")
+                                await test_page.close()
+                                
+                                # Mark session as not logged in and release it
+                                session.logged_in = False
+                                session.in_use = False
+                                
+                                # Continue to next session or create a new one
+                                continue
+                            
                             # If we're redirected to login, we need to log in again
                             if "account.stubhub.com/login" in test_page.url:
                                 logger.info(f"Session {session.id} needs to re-authenticate")
-                                await session.ensure_login(test_page)
+                                login_success = await session.ensure_login(test_page)
+                                
+                                if not login_success:
+                                    logger.error(f"Failed to re-authenticate session {session.id}")
+                                    session.in_use = False  # Release the session
+                                    continue  # Try next session
                             else:
                                 logger.info(f"Session {session.id} is still authenticated")
                                 session.logged_in = True
@@ -265,8 +289,23 @@ class BrowserPool:
                             await test_page.close()
                         except Exception as e:
                             logger.warning(f"Error checking login status: {str(e)}")
-                            # Continue anyway, we'll handle login issues during the actual request
+                            # Try to close the test page if it exists
+                            try:
+                                await test_page.close()
+                            except:
+                                pass
+                                
+                            # Mark session as not logged in and release it
+                            session.logged_in = False
+                            session.in_use = False
+                            continue  # Try next session
                     
+                    # If we got here and the session is not logged in, skip it
+                    if not session.logged_in:
+                        logger.warning(f"Session {session.id} failed login verification, skipping")
+                        session.in_use = False
+                        continue
+                        
                     # Periodically save the storage state to ensure persistence
                     asyncio.create_task(self._save_storage(session.context, f"browser_data/{session.id}"))
                     
@@ -282,7 +321,14 @@ class BrowserPool:
                     session.update_usage()  # Update the usage statistics
                     
                     # Ensure the session is logged in to StubHub
-                    await session.ensure_login()
+                    login_success = await session.ensure_login()
+                    
+                    if not login_success:
+                        logger.error("Failed to log in with new session")
+                        # Mark session for cleanup but don't return it
+                        session.in_use = False
+                        asyncio.create_task(self._cleanup_failed_session(session.id))
+                        return None
                     
                     return session
                     
@@ -298,7 +344,11 @@ class BrowserPool:
                         
                         # Quick check to ensure login state is maintained
                         if not session.logged_in:
-                            await session.ensure_login()
+                            login_success = await session.ensure_login()
+                            if not login_success:
+                                logger.error(f"Failed to log in with session {session.id}")
+                                session.in_use = False
+                                continue  # Try next session
                         
                         return session
                         
@@ -395,6 +445,17 @@ class BrowserPool:
         except Exception as e:
             logger.error(f"Failed to save browser storage: {str(e)}")
             
+    async def _cleanup_failed_session(self, session_id: str):
+        """Clean up a session that failed to initialize properly"""
+        async with self.lock:
+            if session_id in self.sessions:
+                logger.info(f"Cleaning up failed session {session_id}")
+                session = self.sessions[session_id]
+                await session.close()
+                del self.sessions[session_id]
+                return True
+            return False
+
     async def close_all(self):
         """Close all browser sessions"""
         async with self.lock:

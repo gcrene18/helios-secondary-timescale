@@ -55,6 +55,9 @@ class Settings:
     # Rate limits
     MAX_REQUESTS_PER_SESSION: int = int(os.getenv("MAX_REQUESTS_PER_SESSION", "20"))
     MIN_REQUEST_INTERVAL_SECONDS: int = int(os.getenv("MIN_REQUEST_INTERVAL_SECONDS", "10"))
+
+    # API settings
+    API_TIMEOUT_SECONDS: int = int(os.getenv("API_TIMEOUT_SECONDS", "10"))
     
     @property
     def GOLOGIN_PROFILE_IDS(self) -> List[str]:

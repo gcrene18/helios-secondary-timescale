@@ -25,10 +25,19 @@ class ListingResponse(BaseModel):
 @router.get("/{event_id}", response_model=ListingResponse)
 async def get_listings(
     event_id: str,
-    force_refresh: bool = Query(False, description="Force fresh data fetch instead of using cache")
+    force_refresh: bool = Query(False, description="Force fresh data fetch instead of using cache"),
+    fetch_venue_map: bool = Query(False, description="Fetch venue map data along with listings")
 ):
     """
     Get ticket listings for a specific StubHub event
+    
+    Args:
+        event_id: StubHub event ID
+        force_refresh: Force fresh data fetch instead of using cache
+        fetch_venue_map: Fetch venue map data along with listings (default: False)
+        
+    Returns:
+        Listing data including stats and metadata
     """
     try:
         # Check cache first if not forcing refresh
@@ -46,7 +55,7 @@ async def get_listings(
         browser_pool = await get_browser_pool()
         
         # Get listings using browser automation
-        listings_data = await get_event_listings(event_id, browser_pool)
+        listings_data = await get_event_listings(event_id, browser_pool, fetch_venue_map=fetch_venue_map)
         
         # Add basic validation to ensure data meets the model requirements
         if not listings_data:
