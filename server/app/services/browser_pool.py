@@ -11,11 +11,19 @@ from datetime import datetime, timedelta
 import json
 import os
 import uuid
+import sys
 
 from app.config import settings
 from app.utils.stealth import setup_stealth_browser
 from app.utils.debug import save_screenshot
 
+# Add this at the beginning of your main script
+import asyncio
+import sys
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
 # Global singleton instance
 _browser_pool = None
 
@@ -217,6 +225,14 @@ class BrowserPool:
                 
             try:
                 logger.info("Initializing browser pool")
+                
+                # Windows-specific handling
+                if sys.platform == 'win32':
+                    logger.info("Detected Windows platform, using special initialization")
+                    # On Windows, we need to use a different approach to start playwright
+                    import subprocess
+                    subprocess.run(["playwright", "install", "chromium"], check=True)
+                    
                 self.playwright = await async_playwright().start()
                 self.initialized = True
                 
@@ -383,7 +399,9 @@ class BrowserPool:
             # Launch browser with persistent storage
             browser_args = {
                 "headless": settings.BROWSER_HEADLESS,
-                "slow_mo": 50
+                "slow_mo": 50,
+                # Add executable path for Windows
+                "executable_path": None  # Let Playwright find the browser automatically
             }
             
             # Add proxy if configured
@@ -406,12 +424,19 @@ class BrowserPool:
                     "password": password
                 }
             
-            browser = await self.playwright.chromium.launch(**browser_args)
+            try:
+                browser = await self.playwright.chromium.launch(**browser_args)
+            except Exception as browser_error:
+                logger.error(f"Failed to launch browser: {str(browser_error)}")
+                # Try without specific arguments that might be causing issues
+                logger.info("Trying with simplified browser arguments")
+                simplified_args = {"headless": settings.BROWSER_HEADLESS}
+                browser = await self.playwright.chromium.launch(**simplified_args)
             
             # Create browser context with persistent storage
             context = await browser.new_context(
                 storage_state=f"{user_data_dir}/storage.json" if os.path.exists(f"{user_data_dir}/storage.json") else None,
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             )
             
             # Apply stealth settings to avoid detection

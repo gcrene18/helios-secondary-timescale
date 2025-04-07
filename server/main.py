@@ -12,6 +12,9 @@ from app.config import settings
 from app.api.routes import api_router
 from app.core.logging import setup_logging
 
+# This must be the first import
+import fix_asyncio
+
 # Load environment variables
 load_dotenv()
 
