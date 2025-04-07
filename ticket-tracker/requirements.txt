@@ -29,3 +29,8 @@ structlog>=21.5.0
 
 # Concurrency
 asyncio>=3.4.3
+
+# Celery
+celery>=5.2.7
+flower>=1.2.0
+redis>=4.3.4

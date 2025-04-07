@@ -35,6 +35,8 @@ class ListingRepository:
             listing_id SERIAL,
             event_id INTEGER NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
             viagogo_id TEXT NOT NULL,
+            viagogo_listing_id BIGINT,
+            row_id BIGINT,
             section TEXT NOT NULL,
             row TEXT,
             quantity INTEGER NOT NULL,
@@ -42,6 +44,7 @@ class ListingRepository:
             total_price NUMERIC(10, 2) NOT NULL,
             currency TEXT NOT NULL DEFAULT 'USD',
             listing_url TEXT,
+            listing_notes JSONB,
             provider TEXT NOT NULL DEFAULT 'StubHub',
             captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (listing_id, captured_at)
@@ -58,6 +61,7 @@ class ListingRepository:
         create_indexes_sql = f"""
         CREATE INDEX IF NOT EXISTS idx_listings_event_id ON {ListingRepository.TABLE_NAME} (event_id);
         CREATE INDEX IF NOT EXISTS idx_listings_viagogo_id ON {ListingRepository.TABLE_NAME} (viagogo_id);
+        CREATE INDEX IF NOT EXISTS idx_listings_viagogo_listing_id ON {ListingRepository.TABLE_NAME} (viagogo_listing_id);
         CREATE INDEX IF NOT EXISTS idx_listings_section ON {ListingRepository.TABLE_NAME} (section);
         CREATE INDEX IF NOT EXISTS idx_listings_captured_at ON {ListingRepository.TABLE_NAME} (captured_at DESC);
         """
@@ -98,9 +102,9 @@ class ListingRepository:
         """
         insert_sql = f"""
         INSERT INTO {ListingRepository.TABLE_NAME} 
-        (event_id, viagogo_id, section, row, quantity, price_per_ticket, 
-         total_price, currency, listing_url, provider, captured_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (event_id, viagogo_id, viagogo_listing_id, row_id, section, row, quantity, price_per_ticket, 
+         total_price, currency, listing_url, listing_notes, provider, captured_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING listing_id;
         """
         
@@ -108,6 +112,8 @@ class ListingRepository:
             params = (
                 listing.event_id,
                 listing.viagogo_id,
+                listing.viagogo_listing_id,
+                listing.row_id,
                 listing.section,
                 listing.row,
                 listing.quantity,
@@ -115,6 +121,7 @@ class ListingRepository:
                 listing.total_price,
                 listing.currency,
                 listing.listing_url,
+                listing.listing_notes,
                 listing.provider,
                 listing.captured_at or datetime.now()
             )
@@ -155,21 +162,23 @@ class ListingRepository:
         # This is much faster than executemany for large batches
         insert_sql = f"""
         INSERT INTO {ListingRepository.TABLE_NAME} 
-        (event_id, viagogo_id, section, row, quantity, price_per_ticket, 
-         total_price, currency, listing_url, provider, captured_at)
+        (event_id, viagogo_id, viagogo_listing_id, row_id, section, row, quantity, price_per_ticket, 
+         total_price, currency, listing_url, listing_notes, provider, captured_at)
         VALUES %s;
         """
         
         # Prepare data for psycopg2.extras.execute_values
-        template = "(%(event_id)s, %(viagogo_id)s, %(section)s, %(row)s, %(quantity)s, %(price_per_ticket)s, %(total_price)s, %(currency)s, %(listing_url)s, %(provider)s, %(captured_at)s)"
+        template = "(%(event_id)s, %(viagogo_id)s, %(viagogo_listing_id)s, %(row_id)s, %(section)s, %(row)s, %(quantity)s, %(price_per_ticket)s, %(total_price)s, %(currency)s, %(listing_url)s, %(listing_notes)s, %(provider)s, %(captured_at)s)"
         
         params_list = []
         now = datetime.now()
         
         for listing in listings:
             params_list.append({
-                'event_id': listing.event_id,
+                'event_id': event_id,
                 'viagogo_id': listing.viagogo_id,
+                'viagogo_listing_id': listing.viagogo_listing_id,
+                'row_id': listing.row_id,
                 'section': listing.section,
                 'row': listing.row,
                 'quantity': listing.quantity,
@@ -177,6 +186,7 @@ class ListingRepository:
                 'total_price': listing.total_price,
                 'currency': listing.currency,
                 'listing_url': listing.listing_url,
+                'listing_notes': listing.listing_notes,
                 'provider': listing.provider,
                 'captured_at': listing.captured_at or now
             })
@@ -184,10 +194,23 @@ class ListingRepository:
         try:
             # Use psycopg2.extras.execute_values for more efficient bulk insert
             from psycopg2.extras import execute_values
+            import json
+            
+            # Ensure proper JSON serialization for any remaining dict/list values
+            def adapt_params(params):
+                adapted = params.copy()
+                if adapted.get('listing_notes') and not isinstance(adapted['listing_notes'], str):
+                    try:
+                        adapted['listing_notes'] = json.dumps(adapted['listing_notes'])
+                    except (TypeError, ValueError):
+                        adapted['listing_notes'] = None
+                return adapted
+            
+            adapted_params = [adapt_params(p) for p in params_list]
             
             with db.connection() as conn:
                 with conn.cursor() as cursor:
-                    execute_values(cursor, insert_sql, params_list, template=template, page_size=1000)
+                    execute_values(cursor, insert_sql, adapted_params, template=template, page_size=1000)
                     conn.commit()
                     row_count = cursor.rowcount
             

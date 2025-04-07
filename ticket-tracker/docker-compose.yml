@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # Redis for Celery broker and cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+  
+  # Main application - CLI
+  app:
+    build: .
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+      - ./credentials.json:/app/credentials.json:ro
+    env_file:
+      - .env
+    restart: "no"
+    command: python cli.py run
+  
+  # Celery worker
+  worker:
+    build: .
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+      - ./credentials.json:/app/credentials.json:ro
+    env_file:
+      - .env
+    restart: unless-stopped
+    command: python cli.py celery_worker
+  
+  # Celery beat scheduler
+  beat:
+    build: .
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+      - ./credentials.json:/app/credentials.json:ro
+      - celery_beat_data:/app/celery-schedule
+    env_file:
+      - .env
+    restart: unless-stopped
+    command: python cli.py celery_beat
+  
+  # Flower - Celery monitoring
+  flower:
+    build: .
+    depends_on:
+      - redis
+      - worker
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "5555:5555"
+    restart: unless-stopped
+    command: python cli.py celery_flower
+
+volumes:
+  redis_data:
+  celery_beat_data:

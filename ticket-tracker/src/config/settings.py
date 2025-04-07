@@ -85,6 +85,36 @@ class Settings(BaseSettings):
         default=30.0, 
         env="REQUEST_TIMEOUT_SECONDS"
     )
+
+    # Celery Settings
+    celery_broker_url: str = Field(
+        default="redis://127.0.0.1:6379/0",
+        env="CELERY_BROKER_URL"
+    )
+    celery_result_backend: str = Field(
+        default="redis://127.0.0.1:6379/1",
+        env="CELERY_RESULT_BACKEND"
+    )
+    celery_task_time_limit: int = Field(
+        default=300,  # 5 minutes
+        env="CELERY_TASK_TIME_LIMIT"
+    )
+    celery_task_soft_time_limit: int = Field(
+        default=240,  # 4 minutes
+        env="CELERY_TASK_SOFT_TIME_LIMIT"
+    )
+    celery_worker_concurrency: int = Field(
+        default=4,
+        env="CELERY_WORKER_CONCURRENCY"
+    )
+    celery_beat_scheduler: str = Field(
+        default="src.tasks.beat_schedule.RandomizedScheduler",
+        env="CELERY_BEAT_SCHEDULER"
+    )
+    celery_beat_schedule_dir: str = Field(
+        default="./celery-schedule",
+        env="CELERY_BEAT_SCHEDULE_DIR"
+)
     
     @validator("db_uri", pre=True, always=True)
     def assemble_db_uri(cls, v, values):

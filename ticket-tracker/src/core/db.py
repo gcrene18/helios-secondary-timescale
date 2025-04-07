@@ -105,6 +105,28 @@ class DatabaseManager:
             logger.error("Failed to initialize TimescaleDB", error=str(e))
             return False
 
+    def test_connection(self):
+        """
+        Test the database connection.
+        
+        Returns:
+            bool: True if connection is successful, False otherwise
+        """
+        try:
+            conn = self.connect()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1 as test_value")
+                result = cursor.fetchone()
+                if result and 'test_value' in result and result['test_value'] == 1:
+                    logger.info("Database connection test successful")
+                    return True
+                else:
+                    logger.error(f"Database connection test failed: {result}")
+                    return False
+        except Exception as e:
+            logger.error(f"Database connection test failed: {str(e)}")
+            return False
+
 
 # Global database manager instance
 db = DatabaseManager()

@@ -119,8 +119,25 @@ class StubHubClient:
                         'pricePerTicket': price_per_ticket,
                         'totalPrice': total_price,
                         'currency': item.get('currencyCode', 'USD'),
-                        'listingUrl': item.get('listing_url')
+                        'listingUrl': item.get('listing_url'),
+                        'viagogoListingId': item.get('listingId'),  
+                        'rowId': item.get('rowId'),  
+                        'listingNotes': item.get('listingNotes', [])  
                     }
+                    
+                    # Extract viagogoListingId from the listing URL if not directly provided
+                    if not listing['viagogoListingId'] and listing['listingUrl']:
+                        try:
+                            # Extract ID from URLs like https://www.stubhub.com/listing/9097446855
+                            url_parts = listing['listingUrl'].split('/')
+                            if len(url_parts) > 0:
+                                listing_id = url_parts[-1]
+                                if listing_id.isdigit():
+                                    listing['viagogoListingId'] = int(listing_id)
+                                    logger.debug(f"Extracted viagogoListingId {listing_id} from URL {listing['listingUrl']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to extract viagogoListingId from URL: {listing['listingUrl']}", error=str(e))
+                    
                     listings.append(listing)
                 
                 logger.info(f"Parsed {len(listings)} listings from API response")

@@ -31,6 +31,7 @@ from src.infrastructure.services.google_api import GoogleSheetsService
 from src.infrastructure.services.stubhub_api import StubHubService
 from src.scheduler.job_manager import job_manager
 from src.scheduler.randomizer import RandomizationStrategy
+from src.tasks.celery_app import app as celery_app
 
 # Initialize logging
 logger = configure_logging()
@@ -625,6 +626,90 @@ def cleanup_untracked_events(
 
 
 @app.command()
+def celery_worker():
+    """Start the Celery worker for processing tasks."""
+    print_header()
+    console.print("[bold green]Starting Celery worker...[/bold green]")
+    
+    # Prepare worker command
+    worker_cmd = [
+        "celery", 
+        "-A", "src.tasks.celery_app", 
+        "worker",
+        "--loglevel=info",
+        f"--concurrency={settings.celery_worker_concurrency}",
+        f"--time-limit={settings.celery_task_time_limit}",
+        f"--soft-time-limit={settings.celery_task_soft_time_limit}"
+    ]
+    
+    # Execute the worker
+    import subprocess
+    subprocess.run(worker_cmd)
+
+
+@app.command()
+def celery_beat():
+    """Start the Celery beat scheduler for periodic tasks."""
+    print_header()
+    console.print("[bold green]Starting Celery beat scheduler...[/bold green]")
+    
+    # Create schedule directory if it doesn't exist
+    os.makedirs(settings.celery_beat_schedule_dir, exist_ok=True)
+    
+    # Prepare beat command
+    beat_cmd = [
+        "celery", 
+        "-A", "src.tasks.celery_app", 
+        "beat",
+        "--loglevel=info",
+        f"--scheduler={settings.celery_beat_scheduler}",
+        f"--schedule={os.path.join(settings.celery_beat_schedule_dir, 'celerybeat-schedule')}"
+    ]
+    
+    # Execute the beat scheduler
+    import subprocess
+    subprocess.run(beat_cmd)
+
+
+@app.command()
+def celery_flower():
+    """Start the Flower monitoring dashboard for Celery."""
+    print_header()
+    console.print("[bold green]Starting Flower monitoring dashboard...[/bold green]")
+    
+    # Prepare flower command
+    flower_cmd = [
+        "celery", 
+        "-A", "src.tasks.celery_app", 
+        "flower",
+        "--port=5555",
+        f"--broker={settings.celery_broker_url}"
+    ]
+    
+    # Execute flower
+    import subprocess
+    subprocess.run(flower_cmd)
+
+
+@app.command()
+def celery_status():
+    """Show status of Celery workers and tasks."""
+    print_header()
+    console.print("[bold green]Checking Celery status...[/bold green]")
+    
+    # Prepare status command
+    status_cmd = [
+        "celery", 
+        "-A", "src.tasks.celery_app", 
+        "status"
+    ]
+    
+    # Execute status command
+    import subprocess
+    subprocess.run(status_cmd)
+
+
+@app.command()
 def run():
     """Run the full ticket tracking system."""
     print_header()
@@ -692,12 +777,14 @@ def run():
                 )
                 
                 return results
+            
             except Exception as e:
                 logger.error(f"Error in scheduled job: {e}")
                 return None
         
         # Create a wrapper to run the async job
         def run_listings_job():
+            """Run the async listings job."""
             return asyncio.run(fetch_all_listings_job())
         
         # Add the job to the scheduler

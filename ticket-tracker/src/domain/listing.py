@@ -16,6 +16,8 @@ class Listing(BaseModel):
     listing_id: Optional[int] = None
     event_id: Optional[int] = None
     viagogo_id: str
+    viagogo_listing_id: Optional[int] = None  # The specific listing ID from viagogo
+    row_id: Optional[int] = None  # The row ID from viagogo for tracking
     section: str
     row: Optional[str] = None
     quantity: int
@@ -24,7 +26,32 @@ class Listing(BaseModel):
     currency: str = "USD"
     listing_url: Optional[str] = None
     provider: str = "StubHub"
+    listing_notes: Optional[Any] = None  # Notes about the listing (e.g., "Side or rear view")
     captured_at: datetime = Field(default_factory=datetime.now)
+    
+    @validator('listing_notes', pre=True)
+    def convert_listing_notes(cls, value):
+        """Ensure listing_notes is properly formatted for database storage."""
+        import json
+        
+        if value is None:
+            return None
+            
+        # If it's already a string, assume it's already JSON
+        if isinstance(value, str):
+            try:
+                # Validate it's proper JSON by parsing and re-serializing
+                return json.dumps(json.loads(value))
+            except (TypeError, ValueError):
+                # If it's not valid JSON, store it as a JSON string
+                return json.dumps(value)
+                
+        # Convert list or dict to JSON string
+        try:
+            return json.dumps(value)
+        except (TypeError, ValueError):
+            # If conversion fails, return empty JSON array
+            return '[]'
     
     @validator('total_price', pre=True)
     def calculate_total_price(cls, value, values):
@@ -46,6 +73,8 @@ class Listing(BaseModel):
             "listing_id": self.listing_id,
             "event_id": self.event_id,
             "viagogo_id": self.viagogo_id,
+            "viagogo_listing_id": self.viagogo_listing_id,
+            "row_id": self.row_id,
             "section": self.section,
             "row": self.row,
             "quantity": self.quantity,
@@ -54,6 +83,7 @@ class Listing(BaseModel):
             "currency": self.currency,
             "listing_url": self.listing_url,
             "provider": self.provider,
+            "listing_notes": self.listing_notes,
             "captured_at": self.captured_at
         }
     
@@ -67,13 +97,16 @@ class Listing(BaseModel):
         """Create a Listing instance from StubHub API response."""
         return cls(
             viagogo_id=viagogo_id,
+            viagogo_listing_id=data.get('viagogoListingId'),
+            row_id=data.get('rowId'),
             section=data.get('section', 'Unknown'),
             row=data.get('row'),
             quantity=data.get('quantity', 1),
             price_per_ticket=data.get('pricePerTicket', 0.0),
             total_price=data.get('totalPrice', 0.0),
             currency=data.get('currency', 'USD'),
-            listing_url=data.get('listingUrl')
+            listing_url=data.get('listingUrl'),
+            listing_notes=data.get('listingNotes')
         )
     
     @classmethod

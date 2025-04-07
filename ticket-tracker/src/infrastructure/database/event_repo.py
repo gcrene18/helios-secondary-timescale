@@ -248,20 +248,44 @@ class EventRepository:
         query = f"""
         SELECT * FROM {EventRepository.TABLE_NAME}
         WHERE is_tracked = TRUE AND (last_listings_fetch IS NULL OR last_listings_fetch < %s)
-        ORDER BY event_date;
+        ORDER BY last_listings_fetch ASC NULLS FIRST;
+        """
+        
+        with db.cursor() as cursor:
+            cursor.execute(query, (cutoff_time,))
+            rows = cursor.fetchall()
+            
+        return [Event(**row) for row in rows]
+        
+    @staticmethod
+    def get_tracked() -> List[Event]:
+        """
+        Get all events that are marked as tracked.
+        
+        Returns:
+            List of Event objects that are tracked.
+        """
+        from ...core.logging import get_logger
+        logger = get_logger(__name__)
+        
+        logger.info("Fetching tracked events from database")
+        
+        query = f"""
+        SELECT * FROM {EventRepository.TABLE_NAME}
+        WHERE is_tracked = TRUE
+        ORDER BY event_date ASC;
         """
         
         try:
-            results = db.execute(query, (cutoff_time,), commit=False)
-            
-            if not results:
-                return []
+            with db.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
                 
-            events = [Event.from_dict(dict(row)) for row in results]
-            logger.info(f"Found {len(events)} events needing listing updates (older than {hours} hours)")
+            events = [Event(**row) for row in rows]
+            logger.info(f"Retrieved {len(events)} tracked events from database")
             return events
         except Exception as e:
-            logger.error("Error retrieving events needing updates", error=str(e))
+            logger.error(f"Error fetching tracked events: {str(e)}")
             return []
     
     @staticmethod
